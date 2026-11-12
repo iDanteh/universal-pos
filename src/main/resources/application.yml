@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: pos-platform-backend
+
+  datasource:
+    url: ${POSPLATFORM_DB_URL:jdbc:postgresql://localhost:5432/platform}
+    username: ${POSPLATFORM_DB_USER:posplatform_app}
+    password: ${POSPLATFORM_DB_PASSWORD:posplatform_app}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 10000
+
+  # Flyway runs with a dedicated migration user (schema owner, DDL).
+  # Runtime JPA uses the restricted application user (RLS subject).
+  flyway:
+    enabled: true
+    url: ${POSPLATFORM_FLYWAY_URL:jdbc:postgresql://localhost:5432/platform}
+    user: ${POSPLATFORM_FLYWAY_USER:posplatform_migrator}
+    password: ${POSPLATFORM_FLYWAY_PASSWORD:posplatform_migrator}
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+
+server:
+  port: 8080
+  forward-headers-strategy: framework
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+      show-components: when-authorized
+  health:
+    probes:
+      enabled: true
+
+posplatform:
+  version: 0.9.0
+  cors:
+    allowed-origins: ${POSPLATFORM_CORS_ORIGINS:http://localhost:5173}
+  fiscal:
+    # PAC selection (ADR-016): MOCK sandbox stamps validly-shaped documents
+    # instantly; a real PAC lands as a new bean behind the same port.
+    provider: mock
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    com.posplatform: DEBUG

@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.posplatform.it.ReturnsApiIT
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.129 s -- in com.posplatform.it.ReturnsApiIT

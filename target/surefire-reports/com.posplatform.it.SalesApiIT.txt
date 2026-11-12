@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.posplatform.it.SalesApiIT
+-------------------------------------------------------------------------------
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.283 s -- in com.posplatform.it.SalesApiIT
