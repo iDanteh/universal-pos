@@ -3,6 +3,7 @@ package com.posplatform.modules.organization.api;
 import com.posplatform.modules.organization.Organization;
 import com.posplatform.modules.organization.infrastructure.OrganizationRepository;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import com.posplatform.shared.tenancy.TenantTransactionRunner;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +22,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/organizations")
+@RequiresPermission("org.view")
 public class OrganizationController {
 
     private final OrganizationRepository organizationRepository;

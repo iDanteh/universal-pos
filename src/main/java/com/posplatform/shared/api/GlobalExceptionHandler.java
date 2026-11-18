@@ -41,6 +41,15 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    /** Permission denied (v0.10 · ADR-020): business code in $.code. */
+    @ExceptionHandler(ForbiddenException.class)
+    public ProblemDetail handleForbidden(ForbiddenException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+        problem.setTitle("Permission denied");
+        problem.setProperty("code", ex.getCode());
+        return problem;
+    }
+
     @ExceptionHandler({MethodArgumentNotValidException.class, ConstraintViolationException.class})
     public ProblemDetail handleValidation(Exception ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Validation failed");

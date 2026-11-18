@@ -73,6 +73,10 @@ public class SessionAuthFilter extends OncePerRequestFilter {
             if (session.isPresent()) {
                 UUID userId = session.get().getUserId();
                 request.setAttribute(REQUEST_USER_ID, userId);
+                // v0.10 (ADR-020): the verified user id also travels in the
+                // tenant context so PermissionGuard can resolve grants with
+                // the SAME fail-closed identity (never client input).
+                TenantContext.setUserId(userId);
 
                 SecurityContextHolder.getContext().setAuthentication(authenticationOf(userId));
 

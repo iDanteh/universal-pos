@@ -7,6 +7,7 @@ import com.posplatform.modules.sales.application.SalesService.SaleOutcome;
 import com.posplatform.modules.sales.application.SalesService.SalePaymentCommand;
 import com.posplatform.modules.sales.application.SalesService.SaleView;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -34,6 +35,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/sales")
+@RequiresPermission("sales.read")
 public class SaleController {
 
     private final SalesService salesService;
@@ -73,6 +75,7 @@ public class SaleController {
     // ---- Use cases ----
 
     @PostMapping
+    @RequiresPermission("sales.execute")
     public ResponseEntity<SaleView> create(
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateSaleRequest request) {
@@ -104,6 +107,7 @@ public class SaleController {
     }
 
     @PostMapping("/{saleId}/cancel")
+    @RequiresPermission("sales.execute")
     public SaleView cancel(@PathVariable UUID saleId,
                            @Valid @RequestBody CancelSaleRequest request) {
         return salesService.cancel(currentTenant(), saleId, request.reason());

@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface MembershipRoleRepository extends JpaRepository<MembershipRole, UUID> {
 
     List<MembershipRole> findByMembershipId(UUID membershipId);
+
+    List<MembershipRole> findByTenantId(UUID tenantId);
 }

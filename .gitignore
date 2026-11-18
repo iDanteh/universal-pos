@@ -1,0 +1,4 @@
+
+# ---- Build artifacts (higiene fase 10) ----
+target/
+!.mvn/wrapper/maven-wrapper.jar

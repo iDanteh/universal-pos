@@ -14,4 +14,7 @@ public interface MembershipRepository extends JpaRepository<Membership, UUID> {
     List<Membership> findByUserId(UUID userId);
 
     Optional<Membership> findByOrganizationIdAndUserId(UUID organizationId, UUID userId);
+
+    /** Invitation consumption (v0.10): the token hash is the credential. */
+    Optional<Membership> findByInvitationTokenHash(String tokenHash);
 }

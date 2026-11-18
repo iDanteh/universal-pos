@@ -3,9 +3,12 @@ package com.posplatform.modules.identity.application;
 import com.posplatform.modules.identity.AppSession;
 import com.posplatform.modules.identity.AppUser;
 import com.posplatform.modules.identity.AppUserOrganization;
+import com.posplatform.modules.identity.Membership;
 import com.posplatform.modules.identity.infrastructure.AppSessionRepository;
 import com.posplatform.modules.identity.infrastructure.AppUserOrganizationRepository;
 import com.posplatform.modules.identity.infrastructure.AppUserRepository;
+import com.posplatform.modules.identity.infrastructure.MembershipRepository;
+import com.posplatform.shared.tenancy.TenantTransactionRunner;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -62,15 +65,21 @@ public class AuthService {
     private final AppUserRepository appUserRepository;
     private final AppSessionRepository appSessionRepository;
     private final AppUserOrganizationRepository userOrganizationRepository;
+    private final MembershipRepository membershipRepository;
+    private final TenantTransactionRunner tenantRunner;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthService(AppUserRepository appUserRepository,
                        AppSessionRepository appSessionRepository,
-                       AppUserOrganizationRepository userOrganizationRepository) {
+                       AppUserOrganizationRepository userOrganizationRepository,
+                       MembershipRepository membershipRepository,
+                       TenantTransactionRunner tenantRunner) {
         this.appUserRepository = appUserRepository;
         this.appSessionRepository = appSessionRepository;
         this.userOrganizationRepository = userOrganizationRepository;
+        this.membershipRepository = membershipRepository;
+        this.tenantRunner = tenantRunner;
     }
 
     /** Domain error carrying NO detail: identical message for wrong email/password. */
@@ -137,8 +146,18 @@ public class AuthService {
         return session;
     }
 
+    /**
+     * The mirror supplies CANDIDATES only (ADR-011); since v0.10 (ADR-020)
+     * each candidate is re-verified against a real ACTIVE Membership INSIDE
+     * that tenant's RLS scope, so a revoked org stops appearing immediately.
+     */
     private List<OrganizationRef> organizationsOf(UUID userId) {
         return userOrganizationRepository.findByUserIdOrderByCreatedAtAsc(userId).stream()
+                .filter(ref -> tenantRunner.run(ref.getOrganizationId(), () ->
+                        membershipRepository.findByOrganizationIdAndUserId(
+                                        ref.getOrganizationId(), userId)
+                                .map(membership -> membership.getStatus() == Membership.Status.ACTIVE)
+                                .orElse(false)))
                 .map(ref -> new OrganizationRef(
                         ref.getOrganizationId(), ref.getOrganizationName(), ref.isPrimary()))
                 .toList();

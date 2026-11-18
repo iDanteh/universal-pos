@@ -5,6 +5,7 @@ import com.posplatform.modules.organization.application.AddLegalEntityService;
 import com.posplatform.modules.organization.application.OrganizationProfileService;
 import com.posplatform.modules.organization.infrastructure.LegalEntityRepository;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import com.posplatform.shared.tenancy.TenantTransactionRunner;
 import jakarta.validation.Valid;
@@ -32,6 +33,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/organizations/current")
+@RequiresPermission("org.view")
 public class OrganizationProfileController {
 
     private final OrganizationProfileService profileService;
@@ -79,6 +81,7 @@ public class OrganizationProfileController {
 
     /** Change giro: pure declarative switch (entity-validated, DB-CHECK backed). */
     @PostMapping("/vertical")
+    @RequiresPermission("org.manage")
     public ProfileResponse changeVertical(@Valid @RequestBody VerticalChangeRequest request) {
         return ProfileResponse.of(profileService.changeVertical(currentTenant(), request.verticalCode()));
     }
@@ -96,6 +99,7 @@ public class OrganizationProfileController {
 
     /** Add a razón social (+ optional first branch) inside the tenant scope. */
     @PostMapping("/legal-entities")
+    @RequiresPermission("org.manage")
     public ResponseEntity<LegalEntityCreatedResponse> addLegalEntity(
             @Valid @RequestBody LegalEntityRequest request) {
         UUID tenantId = currentTenant();

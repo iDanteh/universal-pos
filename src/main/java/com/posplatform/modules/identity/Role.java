@@ -44,6 +44,14 @@ public class Role extends Auditable {
     @Column(length = 255)
     private String description;
 
+    /**
+     * Provisioning-created roles (OWNER "Administrador") are immutable for the
+     * roles API (v0.10 · ADR-020): the platform manifest flows INTO system
+     * roles via migrations, never through client input.
+     */
+    @Column(name = "is_system", nullable = false)
+    private boolean system = false;
+
     @ManyToMany
     @JoinTable(
             name = "role_permission",
@@ -65,9 +73,23 @@ public class Role extends Auditable {
     public Organization getOrganization() { return organization; }
     public UUID getTenantId() { return tenantId; }
     public String getName() { return name; }
+    public String getDescription() { return description; }
+    public boolean isSystem() { return system; }
+    public void markSystem() { this.system = true; }
     public Set<Permission> getPermissions() { return permissions; }
 
     public void grant(Permission permission) {
         this.permissions.add(permission);
+    }
+
+    /** Full grant replacement (custom roles only — guarded by the service). */
+    public void setPermissions(Set<Permission> permissions) {
+        this.permissions.clear();
+        this.permissions.addAll(permissions);
+    }
+
+    public void rename(String name, String description) {
+        this.name = name;
+        this.description = description;
     }
 }

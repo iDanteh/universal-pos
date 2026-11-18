@@ -3,6 +3,7 @@ package com.posplatform.modules.branding.api;
 import com.posplatform.modules.branding.application.BrandResolver;
 import com.posplatform.modules.branding.application.EffectiveBranding;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,6 +22,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/branding")
+@RequiresPermission("org.view")
 public class BrandingController {
 
     private final BrandResolver brandResolver;

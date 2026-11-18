@@ -4,6 +4,7 @@ import com.posplatform.config.SessionAuthFilter;
 import com.posplatform.modules.cash.application.CashService;
 import com.posplatform.modules.cash.application.CashService.CloseCounts;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -34,6 +35,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/cash/sessions")
+@RequiresPermission("cash.operate")
 public class CashController {
 
     private final CashService cashService;

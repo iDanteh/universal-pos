@@ -56,6 +56,9 @@ public class SecurityConfig {
                     "/swagger-ui.html",
                     "/api/v1/system/status",
                     "/api/v1/auth/login",
+                    // v0.10 (ADR-020): consuming an invitation is public — the
+                    // token IS the credential and carries its own tenant scope.
+                    "/api/v1/auth/invitations/accept",
                     "/error"
                 ).permitAll()
                 .anyRequest().authenticated()

@@ -6,6 +6,7 @@ import com.posplatform.modules.sales.application.ReturnsService.ReturnLineComman
 import com.posplatform.modules.sales.application.ReturnsService.ReturnOutcome;
 import com.posplatform.modules.sales.application.ReturnsService.ReturnView;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -28,6 +29,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/returns")
+@RequiresPermission("sales.execute")
 public class ReturnController {
 
     private final ReturnsService returnsService;

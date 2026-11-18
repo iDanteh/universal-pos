@@ -13,6 +13,7 @@ import com.posplatform.modules.inventory.application.InventoryService.TransferCo
 import com.posplatform.modules.inventory.application.InventoryService.TransferLineCommand;
 import com.posplatform.modules.inventory.application.InventoryService.WarehouseView;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,6 +38,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/inventory")
+@RequiresPermission("inventory.read")
 public class InventoryController {
 
     private final InventoryService inventoryService;
@@ -98,6 +100,7 @@ public class InventoryController {
 
     @PostMapping("/warehouses")
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresPermission("inventory.write")
     public WarehouseView createWarehouse(@RequestBody WarehouseRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("El cuerpo del almacén es requerido");
@@ -133,6 +136,7 @@ public class InventoryController {
 
     @PostMapping("/receipts")
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresPermission("inventory.write")
     public StockOperationResult receive(@RequestBody ReceiveRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("El cuerpo de la recepción es requerido");
@@ -149,6 +153,7 @@ public class InventoryController {
 
     @PostMapping("/adjustments")
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresPermission("inventory.write")
     public StockOperationResult adjust(@RequestBody AdjustRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("El cuerpo del ajuste es requerido");
@@ -166,6 +171,7 @@ public class InventoryController {
 
     @PostMapping("/transfers")
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresPermission("inventory.write")
     public StockOperationResult transfer(@RequestBody TransferRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("El cuerpo de la transferencia es requerido");

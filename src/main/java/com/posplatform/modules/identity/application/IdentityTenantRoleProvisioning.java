@@ -18,12 +18,21 @@ import java.util.Set;
 @Component
 public class IdentityTenantRoleProvisioning implements RoleProvisioning {
 
-    /** Base manifest granted on onboarding; the platform catalog is seeded by migrations. */
+    /** Full manifest granted on onboarding (v0.10 · ADR-020): the OWNER is the
+     *  bootstrap admin and must satisfy every guard of every endpoint. New
+     *  permission codes arrive by migration (and are granted to existing
+     *  system roles there) — this set tracks the full seeded catalog.
+     */
     static final Set<String> OWNER_PERMISSIONS = Set.of(
             "org.view", "org.manage", "org.settings.manage",
             "users.manage", "roles.manage",
-            "subscription.view",
-            "branch.view", "branch.manage"
+            "subscription.view", "subscription.manage",
+            "branch.view", "branch.manage",
+            "catalog.read", "catalog.write",
+            "inventory.read", "inventory.write",
+            "sales.read", "sales.execute",
+            "fiscal.read", "fiscal.write",
+            "cash.operate"
     );
 
     private final RoleRepository roleRepository;
@@ -44,6 +53,7 @@ public class IdentityTenantRoleProvisioning implements RoleProvisioning {
                     "Permission catalog incomplete for OWNER role; check migration seeds");
         }
         permissions.forEach(role::grant);
+        role.markSystem();
         return roleRepository.save(role);
     }
 }

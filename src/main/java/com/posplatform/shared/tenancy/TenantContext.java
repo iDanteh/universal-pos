@@ -22,6 +22,14 @@ public final class TenantContext {
 
     private static final ThreadLocal<UUID> TENANT_ID = new ThreadLocal<>();
 
+    /**
+     * Request-scoped user identity, published by SessionAuthFilter alongside
+     * the tenant (v0.10 · ADR-020). PermissionGuard reads it — the tenant
+     * resolution invariant above applies equally: it comes ONLY from the
+     * verified DB session, never from client input.
+     */
+    private static final ThreadLocal<UUID> USER_ID = new ThreadLocal<>();
+
     private TenantContext() {
     }
 
@@ -45,7 +53,28 @@ public final class TenantContext {
         TENANT_ID.set(tenantId);
     }
 
+    public static Optional<UUID> currentUserId() {
+        return Optional.ofNullable(USER_ID.get());
+    }
+
+    /** @return the user id, or throws if no user is bound (fail closed). */
+    public static UUID requireUserId() {
+        UUID id = USER_ID.get();
+        if (id == null) {
+            throw new TenantContextMissingException();
+        }
+        return id;
+    }
+
+    public static void setUserId(UUID userId) {
+        if (userId == null) {
+            throw new IllegalArgumentException("user id must not be null");
+        }
+        USER_ID.set(userId);
+    }
+
     public static void clear() {
         TENANT_ID.remove();
+        USER_ID.remove();
     }
 }

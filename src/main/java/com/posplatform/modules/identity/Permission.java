@@ -41,4 +41,5 @@ public class Permission extends Auditable {
     public UUID getId() { return id; }
     public String getCode() { return code; }
     public String getName() { return name; }
+    public String getDescription() { return description; }
 }

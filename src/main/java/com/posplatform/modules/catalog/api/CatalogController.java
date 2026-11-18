@@ -6,6 +6,7 @@ import com.posplatform.modules.catalog.application.CatalogService.CreateProductC
 import com.posplatform.modules.catalog.application.CatalogService.UnitsView;
 import com.posplatform.modules.catalog.application.CatalogService.VariantCommand;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -28,6 +29,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/catalog")
+@RequiresPermission("catalog.read")
 public class CatalogController {
 
     private final CatalogService catalogService;
@@ -88,6 +90,7 @@ public class CatalogController {
     }
 
     @PostMapping("/products")
+    @RequiresPermission("catalog.write")
     public ResponseEntity<CatalogService.ProductView> createProduct(
             @Valid @RequestBody ProductRequest request) {
         UUID tenantId = currentTenant();
@@ -106,6 +109,7 @@ public class CatalogController {
     // ---- Variants ----
 
     @PostMapping("/products/{productId}/variants")
+    @RequiresPermission("catalog.write")
     public ResponseEntity<CatalogService.VariantView> addVariant(
             @PathVariable UUID productId,
             @Valid @RequestBody VariantRequest request) {

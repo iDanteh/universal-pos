@@ -3,6 +3,7 @@ package com.posplatform.modules.invoicing.api;
 import com.posplatform.modules.invoicing.SatCatalog;
 import com.posplatform.modules.invoicing.application.InvoicingService;
 import com.posplatform.shared.api.NotFoundException;
+import com.posplatform.shared.authz.RequiresPermission;
 import com.posplatform.shared.tenancy.TenantContext;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -33,6 +34,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/invoices")
+@RequiresPermission("fiscal.read")
 public class InvoicingController {
 
     private final InvoicingService invoicingService;
@@ -88,6 +90,7 @@ public class InvoicingController {
     // ---- SAT catalogs (form inputs) ----
 
     @GetMapping("/sat/catalogs")
+    @RequiresPermission({}) // world-readable SAT reference data (no tenant scope)
     public List<InvoicingService.CatalogItem> catalogs(
             @RequestParam String catalog) {
         SatCatalog.Catalog parsed;
@@ -109,6 +112,7 @@ public class InvoicingController {
     }
 
     @PutMapping("/emisor/{legalEntityId}")
+    @RequiresPermission("fiscal.write")
     public InvoicingService.EmisorView saveEmisor(@PathVariable UUID legalEntityId,
                                                   @Valid @RequestBody EmisorRequest request) {
         return invoicingService.saveEmisor(currentTenant(), legalEntityId,
@@ -119,6 +123,7 @@ public class InvoicingController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresPermission("fiscal.write")
     public InvoicingService.InvoiceView issueFromSale(@Valid @RequestBody IssueFromSaleRequest request) {
         ReceptorRequest r = request.receptor();
         return invoicingService.issueFromSale(currentTenant(), new InvoicingService.IssueFromSaleCommand(
@@ -131,6 +136,7 @@ public class InvoicingController {
 
     @PostMapping("/global")
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresPermission("fiscal.write")
     public InvoicingService.InvoiceView issueGlobal(@Valid @RequestBody IssueGlobalRequest request) {
         int month = Integer.parseInt(request.periodMonth());
         return invoicingService.issueGlobal(currentTenant(), new InvoicingService.IssueGlobalCommand(
@@ -144,6 +150,7 @@ public class InvoicingController {
      */
     @PostMapping("/credit-notes")
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresPermission("fiscal.write")
     public InvoicingService.InvoiceView issueCreditNote(
             @Valid @RequestBody IssueCreditNoteRequest request) {
         return invoicingService.issueCreditNote(currentTenant(),
@@ -151,6 +158,7 @@ public class InvoicingController {
     }
 
     @PostMapping("/{invoiceId}/cancel")
+    @RequiresPermission("fiscal.write")
     public InvoicingService.InvoiceView cancel(@PathVariable UUID invoiceId,
                                                @Valid @RequestBody CancelInvoiceRequest request) {
         return invoicingService.cancel(currentTenant(), invoiceId, new InvoicingService.CancelCommand(
