@@ -57,7 +57,8 @@ public class InvoicingController {
     public record IssueFromSaleRequest(
             @NotNull UUID saleId,
             UUID legalEntityId,
-            @Valid ReceptorRequest receptor
+            @Valid ReceptorRequest receptor,
+            List<String> withholdings
     ) {
     }
 
@@ -74,6 +75,14 @@ public class InvoicingController {
     public record CancelInvoiceRequest(
             @NotBlank @Pattern(regexp = "^(01|02|03|04)$", message = "motivo SAT: 01/02/03/04") String motive,
             @Size(max = 280) String note
+    ) {
+    }
+
+    /** Payment complement (fase 11 · ADR-021): amount + SAT forma de pago. */
+    public record PaymentRequest(
+            @NotNull java.math.BigDecimal amount,
+            @NotBlank @Pattern(regexp = "^\\d{2}$", message = "forma de pago SAT: 2 dígitos") String method,
+            java.time.Instant paymentDate
     ) {
     }
 
@@ -131,7 +140,8 @@ public class InvoicingController {
                 request.legalEntityId(),
                 r == null ? null
                         : new InvoicingService.ReceptorCommand(r.rfc(), r.name(), r.regime(),
-                                r.use(), r.zip())));
+                                r.use(), r.zip()),
+                request.withholdings()));
     }
 
     @PostMapping("/global")
@@ -155,6 +165,23 @@ public class InvoicingController {
             @Valid @RequestBody IssueCreditNoteRequest request) {
         return invoicingService.issueCreditNote(currentTenant(),
                 new InvoicingService.IssueCreditNoteCommand(request.returnId()));
+    }
+
+    /**
+     * PAYMENT complement (fase 11 · ADR-021, CFDI tipo P) against a STAMPED
+     * income CFDI. The balance itself is the guard: a repeat exceeding it
+     * answers 409 PAG_OVER_BALANCE.
+     */
+    @PostMapping("/{invoiceId}/payments")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequiresPermission("fiscal.write")
+    public InvoicingService.InvoiceView issuePaymentComplement(
+            @PathVariable UUID invoiceId,
+            @Valid @RequestBody PaymentRequest request) {
+        return invoicingService.issuePaymentComplement(currentTenant(),
+                new InvoicingService.IssuePaymentCommand(
+                        invoiceId, request.amount(), request.method(),
+                        request.paymentDate()));
     }
 
     @PostMapping("/{invoiceId}/cancel")

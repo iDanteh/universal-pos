@@ -66,10 +66,18 @@ public class ProductVariant extends Auditable {
      * Transferred-tax rate the tenant assigns to this SKU (v0.8 · ADR-018):
      * normalized UPPER code into the global {@code tax_rate} catalog (V15),
      * validated service-side; null = sin impuesto (tax 0, ObjetoImpuesto 01).
-     * 0..1 traslado per line in v0.8 — the IEPS->IVA chain arrives later.
+     * The IVA slot of the line (v0.11 · ADR-021 chains IEPS->IVA).
      */
     @Column(name = "tax_rate_code", length = 16)
     private String taxRateCode;
+
+    /**
+     * OPTIONAL IEPS rate of the SKU (v0.11 · ADR-021): a second traslado on
+     * the line; IVA is computed on the IEPS-INCLUSIVE base. Validated to be
+     * an IEPS-scheme catalog code; null = sin IEPS.
+     */
+    @Column(name = "ieps_rate_code", length = 16)
+    private String iepsRateCode;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, columnDefinition = "text")
@@ -81,6 +89,12 @@ public class ProductVariant extends Auditable {
     public ProductVariant(UUID tenantId, Product product, String sku, String barcode,
                           String unit, Map<String, String> attributes, BigDecimal price,
                           String taxRateCode) {
+        this(tenantId, product, sku, barcode, unit, attributes, price, taxRateCode, null);
+    }
+
+    public ProductVariant(UUID tenantId, Product product, String sku, String barcode,
+                          String unit, Map<String, String> attributes, BigDecimal price,
+                          String taxRateCode, String iepsRateCode) {
         this.tenantId = tenantId;
         this.product = product;
         this.sku = sku;
@@ -89,6 +103,7 @@ public class ProductVariant extends Auditable {
         this.attributes = attributes == null ? Map.of() : Map.copyOf(attributes);
         this.price = price;
         this.taxRateCode = taxRateCode;
+        this.iepsRateCode = iepsRateCode;
         this.status = Status.ACTIVE;
     }
 
@@ -102,5 +117,6 @@ public class ProductVariant extends Auditable {
     public Map<String, String> getAttributes() { return attributes; }
     public BigDecimal getPrice() { return price; }
     public String getTaxRateCode() { return taxRateCode; }
+    public String getIepsRateCode() { return iepsRateCode; }
     public Status getStatus() { return status; }
 }

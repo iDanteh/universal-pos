@@ -13,7 +13,7 @@
 
   <groupId>com.posplatform</groupId>
   <artifactId>backend</artifactId>
-  <version>0.10.0</version>
+  <version>0.11.0</version>
 
   <name>pos-platform-backend</name>
   <description>POS Platform - modular monolith backend (v0.10.0 · Usuarios y roles del tenant)</description>

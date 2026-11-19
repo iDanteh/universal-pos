@@ -120,7 +120,9 @@ public class SalesService {
             String discount,
             String lineTotal,
             String taxRateCode,
-            String taxTotal
+            String taxTotal,
+            String iepsRateCode,
+            String iepsTotal
     ) {
     }
 
@@ -214,22 +216,31 @@ public class SalesService {
                 subtotal = subtotal.add(quantity.multiply(unitPrice));
                 discountTotal = discountTotal.add(discount);
 
-                // ADR-018: the tax is computed ONCE per line, on the line net
-                // (qty x price - discount = the CFDI "Base"), rounded 2dp
-                // HALF_UP and SNAPSHOTTED. No rate code (or an unknown one is
-                // impossible here: the variant validates it in catalog) keeps
-                // the legacy behavior EXACTLY: tax 0, totals unchanged.
+                // ADR-018 + v0.11 (ADR-021): the taxes are computed ONCE per
+                // line and SNAPSHOTTED. IEPS goes on the line net; IVA on the
+                // IEPS-INCLUSIVE base; both 2dp HALF_UP. tax_total = SUM of
+                // traslados (ieps_total keeps the IEPS part). A variant
+                // without codes keeps the legacy behavior EXACTLY: tax 0,
+                // totals unchanged.
                 String lineTaxCode = normalizeTaxCode(variant.getTaxRateCode());
-                BigDecimal lineTax = lineTaxCode == null
+                String lineIepsCode = normalizeTaxCode(variant.getIepsRateCode());
+                BigDecimal lineIeps = lineIepsCode == null
                         ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
-                        : lineTotal.multiply(requireTaxRate(lineTaxCode))
+                        : lineTotal.multiply(requireTaxRate(lineIepsCode))
                                 .setScale(2, RoundingMode.HALF_UP);
+                BigDecimal lineIva = lineTaxCode == null
+                        ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+                        : lineTotal.add(lineIeps)
+                                .multiply(requireTaxRate(lineTaxCode))
+                                .setScale(2, RoundingMode.HALF_UP);
+                BigDecimal lineTax = lineIeps.add(lineIva);
                 taxTotal = taxTotal.add(lineTax);
 
                 lines.add(new SaleLine(
                         tenantId, null, variant.getId(),
                         variant.getProduct().getName(), variant.getSku(), variant.getUnit(),
-                        quantity, unitPrice, discount, lineTotal, lineTaxCode, lineTax));
+                        quantity, unitPrice, discount, lineTotal, lineTaxCode, lineTax,
+                        lineIepsCode, lineIeps));
             }
 
             subtotal = subtotal.setScale(2, RoundingMode.HALF_UP);
@@ -268,13 +279,15 @@ public class SalesService {
                         tenantId, sale, linePre.getVariantId(), linePre.getProductName(),
                         linePre.getSku(), linePre.getUnit(), linePre.getQuantity(),
                         linePre.getUnitPrice(), linePre.getDiscount(), linePre.getLineTotal(),
-                        linePre.getTaxRateCode(), linePre.getTaxTotal()));
+                        linePre.getTaxRateCode(), linePre.getTaxTotal(),
+                        linePre.getIepsRateCode(), linePre.getIepsTotal()));
                 lineViews.add(new SaleLineView(
                         saved.getId(), saved.getVariantId(), saved.getProductName(),
                         saved.getSku(), saved.getUnit(),
                         saved.getQuantity().toPlainString(), saved.getUnitPrice().toPlainString(),
                         saved.getDiscount().toPlainString(), saved.getLineTotal().toPlainString(),
-                        saved.getTaxRateCode(), saved.getTaxTotal().toPlainString()));
+                        saved.getTaxRateCode(), saved.getTaxTotal().toPlainString(),
+                        saved.getIepsRateCode(), saved.getIepsTotal().toPlainString()));
             }
 
             List<SalePaymentView> paymentViews = new ArrayList<>();
@@ -375,7 +388,8 @@ public class SalesService {
                         line.getSku(), line.getUnit(),
                         line.getQuantity().toPlainString(), line.getUnitPrice().toPlainString(),
                         line.getDiscount().toPlainString(), line.getLineTotal().toPlainString(),
-                        line.getTaxRateCode(), line.getTaxTotal().toPlainString()))
+                        line.getTaxRateCode(), line.getTaxTotal().toPlainString(),
+                        line.getIepsRateCode(), line.getIepsTotal().toPlainString()))
                 .toList();
         List<SalePaymentView> payments = paymentRepository
                 .findByTenantIdAndSaleIdOrderByCreatedAtAsc(tenantId, sale.getId())

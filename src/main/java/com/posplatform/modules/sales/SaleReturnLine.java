@@ -70,6 +70,14 @@ public class SaleReturnLine extends Auditable {
     @Column(name = "tax_total", nullable = false, precision = 14, scale = 2)
     private BigDecimal taxTotal;
 
+    /** IEPS traslado prorated SEPARATELY (v0.11 · ADR-021) so the NC stamps
+     * the same 2-traslado shape the sale charged. tax_total stays the SUM. */
+    @Column(name = "ieps_rate_code", length = 16)
+    private String iepsRateCode;
+
+    @Column(name = "ieps_total", nullable = false, precision = 14, scale = 2)
+    private BigDecimal iepsTotal = BigDecimal.ZERO.setScale(2);
+
     protected SaleReturnLine() {
     }
 
@@ -77,6 +85,16 @@ public class SaleReturnLine extends Auditable {
                           UUID variantId, String productName, String sku, String unit,
                           BigDecimal quantity, BigDecimal unitPrice, BigDecimal discount,
                           BigDecimal lineTotal, String taxRateCode, BigDecimal taxTotal) {
+        this(tenantId, saleReturn, saleLineId, variantId, productName, sku, unit,
+                quantity, unitPrice, discount, lineTotal, taxRateCode, taxTotal,
+                null, BigDecimal.ZERO.setScale(2));
+    }
+
+    public SaleReturnLine(UUID tenantId, SaleReturn saleReturn, UUID saleLineId,
+                          UUID variantId, String productName, String sku, String unit,
+                          BigDecimal quantity, BigDecimal unitPrice, BigDecimal discount,
+                          BigDecimal lineTotal, String taxRateCode, BigDecimal taxTotal,
+                          String iepsRateCode, BigDecimal iepsTotal) {
         this.tenantId = tenantId;
         this.saleReturn = saleReturn;
         this.saleLineId = saleLineId;
@@ -90,6 +108,8 @@ public class SaleReturnLine extends Auditable {
         this.lineTotal = lineTotal;
         this.taxRateCode = taxRateCode;
         this.taxTotal = taxTotal;
+        this.iepsRateCode = iepsRateCode;
+        this.iepsTotal = iepsTotal;
     }
 
     public UUID getId() { return id; }
@@ -106,4 +126,6 @@ public class SaleReturnLine extends Auditable {
     public BigDecimal getLineTotal() { return lineTotal; }
     public String getTaxRateCode() { return taxRateCode; }
     public BigDecimal getTaxTotal() { return taxTotal; }
+    public String getIepsRateCode() { return iepsRateCode; }
+    public BigDecimal getIepsTotal() { return iepsTotal; }
 }

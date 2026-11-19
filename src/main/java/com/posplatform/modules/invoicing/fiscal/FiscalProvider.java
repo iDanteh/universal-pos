@@ -38,7 +38,7 @@ public interface FiscalProvider {
     record StampRequest(
             String serie,
             long folio,
-            /** CFDI type: "I" ingreso (FA) or "E" egreso (NC, fase 9 · ADR-019). */
+            /** CFDI type: "I" ingreso (FA), "E" egreso (NC) or "P" pago (fase 11). */
             String documentType,
             String emisorRfc,
             String emisorName,
@@ -55,21 +55,32 @@ public interface FiscalProvider {
             BigDecimal taxTotal,
             BigDecimal total,
             /** For "E": fiscal UUID of the related income CFDI (TipoRelacion 01). */
-            UUID relatedFiscalId
+            UUID relatedFiscalId,
+            /** Federal retenciones SNAPSHOT (v0.11 · ADR-021, document level). */
+            List<StampWithholding> withholdings
     ) {
     }
 
     /**
-     * One line's transferred tax (v0.8 · ADR-018, 0..1 traslado per line):
-     * the invoicing service snapshots code/scheme/factor/rate per line and
-     * taxTotal EXACTLY as charged in the sale — providers validate but never
-     * recompute. Null code = sin impuesto (ObjetoImpuesto 01, tax 0).
+     * One line's transferred taxes (v0.11 · ADR-021 extends ADR-018): the
+     * invoicing service snapshots code/scheme/factor/rate per line and each
+     * amount EXACTLY as charged in the sale — providers validate but never
+     * recompute. IVA amount = taxTotal (whose Base is the IEPS-inclusive
+     * net when iepsTotal > 0); iepsTotal is the second traslado. Null codes
+     * = sin impuesto de ese esquema.
      */
     record StampLine(String description, String sku, String unitSat,
                      BigDecimal quantity, BigDecimal unitPrice,
                      BigDecimal discount, BigDecimal lineTotal,
                      String taxRateCode, String taxScheme, String taxFactor,
-                     BigDecimal taxRate, BigDecimal taxTotal) {
+                     BigDecimal taxRate, BigDecimal taxTotal,
+                     String iepsRateCode, String iepsScheme, String iepsFactor,
+                     BigDecimal iepsRate, BigDecimal iepsTotal) {
+    }
+
+    /** One document-level federal retention snapshot (v0.11 · ADR-021). */
+    record StampWithholding(String code, String scheme, String factor,
+                            BigDecimal rate, BigDecimal amount) {
     }
 
     /** Immutable output: folio fiscal + provider metadata (the XML preview). */

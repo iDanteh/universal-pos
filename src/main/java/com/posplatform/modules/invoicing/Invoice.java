@@ -27,8 +27,9 @@ public class Invoice extends Auditable {
 
     public enum Status { PENDING, STAMPED, CANCELED, ERROR }
 
-    /** INDIVIDUAL/GLOBAL = CFDI de ingreso (I); CREDIT_NOTE = tipo E (fase 9). */
-    public enum Kind { INDIVIDUAL, GLOBAL, CREDIT_NOTE }
+    /** INDIVIDUAL/GLOBAL = CFDI de ingreso (I); CREDIT_NOTE = tipo E (fase 9);
+     * PAYMENT = complemento de pago tipo P (fase 11 · ADR-021). */
+    public enum Kind { INDIVIDUAL, GLOBAL, CREDIT_NOTE, PAYMENT }
 
     @Id
     @UuidGenerator(style = Style.TIME)
@@ -99,6 +100,26 @@ public class Invoice extends Auditable {
     @Column(name = "tax_total", nullable = false, precision = 14, scale = 2)
     private BigDecimal taxTotal;
 
+    /** Withholding SNAPSHOT (v0.11 · ADR-021): [{code, scheme, rate, amount}]
+     * — federal retenciones captured ONCE at issuance, never recomputed. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private String withholding;
+
+    @Column(name = "withholding_total", nullable = false, precision = 14, scale = 2)
+    private BigDecimal withholdingTotal = BigDecimal.ZERO.setScale(2);
+
+    /** Payment complement (kind PAYMENT · ADR-021): the settled amount
+     * (Complemento pago Monto), SAT forma de pago and payment instant. */
+    @Column(name = "payment_amount", precision = 14, scale = 2)
+    private BigDecimal paymentAmount;
+
+    @Column(name = "payment_method", length = 4)
+    private String paymentMethod;
+
+    @Column(name = "payment_date")
+    private Instant paymentDate;
+
     @Column(nullable = false, precision = 14, scale = 2)
     private BigDecimal total;
 
@@ -164,6 +185,29 @@ public class Invoice extends Auditable {
         this.provider = "MOCK";
     }
 
+    /** Constructor del complemento de pago (kind PAYMENT · ADR-021): el
+     * monto pagado es el SubTotal y el Total del CFDI tipo P. */
+    public static Invoice paymentComplement(UUID tenantId, UUID legalEntityId,
+                                            String serie, long folio,
+                                            UUID relatedInvoiceId,
+                                            String receptorRfc, String receptorName,
+                                            String receptorRegime, String receptorUse,
+                                            String receptorZip,
+                                            BigDecimal amount, String method,
+                                            Instant paymentDate) {
+        Invoice pago = new Invoice(tenantId, legalEntityId, serie, folio,
+                Kind.PAYMENT, null,
+                receptorRfc, receptorName, receptorRegime, receptorUse, receptorZip,
+                null, null,
+                amount, BigDecimal.ZERO.setScale(2),
+                BigDecimal.ZERO.setScale(2), amount);
+        pago.relatedInvoiceId = relatedInvoiceId;
+        pago.paymentAmount = amount;
+        pago.paymentMethod = method;
+        pago.paymentDate = paymentDate;
+        return pago;
+    }
+
     /** Stamp transition: only the provider fills the folio fiscal. */
     public void stamp(UUID fiscalId, Instant when) {
         this.status = Status.STAMPED;
@@ -206,6 +250,15 @@ public class Invoice extends Auditable {
     public BigDecimal getSubtotal() { return subtotal; }
     public BigDecimal getDiscountTotal() { return discountTotal; }
     public BigDecimal getTaxTotal() { return taxTotal; }
+    public String getWithholding() { return withholding; }
+    public void setWithholding(String withholding) { this.withholding = withholding; }
+    public BigDecimal getWithholdingTotal() { return withholdingTotal; }
+    public void setWithholdingTotal(BigDecimal withholdingTotal) {
+        this.withholdingTotal = withholdingTotal;
+    }
+    public BigDecimal getPaymentAmount() { return paymentAmount; }
+    public String getPaymentMethod() { return paymentMethod; }
+    public Instant getPaymentDate() { return paymentDate; }
     public BigDecimal getTotal() { return total; }
     public Status getStatus() { return status; }
     public String getStatusReason() { return statusReason; }

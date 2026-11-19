@@ -60,12 +60,21 @@ public class InvoiceLine extends Auditable {
     private BigDecimal lineTotal;
 
     /** Mirrors the sale line's tax 1:1 (ADR-018): the CFDI never re-bills an
-     * amount nor rate different from what was actually charged. */
+     * amount nor rate different from what was actually charged. tax_total is
+     * the SUM of traslados; the IEPS part lives in ieps_total (v0.11 ·
+     * ADR-021) so the IVA is tax_total - ieps_total. */
     @Column(name = "tax_rate_code", length = 16)
     private String taxRateCode;
 
     @Column(name = "tax_total", nullable = false, precision = 14, scale = 2)
     private BigDecimal taxTotal;
+
+    /** OPTIONAL IEPS traslado (v0.11 · ADR-021): code + SNAPSHOT amount. */
+    @Column(name = "ieps_rate_code", length = 16)
+    private String iepsRateCode;
+
+    @Column(name = "ieps_total", nullable = false, precision = 14, scale = 2)
+    private BigDecimal iepsTotal = BigDecimal.ZERO.setScale(2);
 
     protected InvoiceLine() {
     }
@@ -75,6 +84,17 @@ public class InvoiceLine extends Auditable {
                        BigDecimal quantity, BigDecimal unitPrice,
                        BigDecimal discount, BigDecimal lineTotal,
                        String taxRateCode, BigDecimal taxTotal) {
+        this(tenantId, invoice, saleLineId, description, sku, unitSat,
+                quantity, unitPrice, discount, lineTotal,
+                taxRateCode, taxTotal, null, BigDecimal.ZERO.setScale(2));
+    }
+
+    public InvoiceLine(UUID tenantId, Invoice invoice, UUID saleLineId,
+                       String description, String sku, String unitSat,
+                       BigDecimal quantity, BigDecimal unitPrice,
+                       BigDecimal discount, BigDecimal lineTotal,
+                       String taxRateCode, BigDecimal taxTotal,
+                       String iepsRateCode, BigDecimal iepsTotal) {
         this.tenantId = tenantId;
         this.invoice = invoice;
         this.saleLineId = saleLineId;
@@ -87,6 +107,8 @@ public class InvoiceLine extends Auditable {
         this.lineTotal = lineTotal;
         this.taxRateCode = taxRateCode;
         this.taxTotal = taxTotal;
+        this.iepsRateCode = iepsRateCode;
+        this.iepsTotal = iepsTotal;
     }
 
     public UUID getId() { return id; }
@@ -102,4 +124,6 @@ public class InvoiceLine extends Auditable {
     public BigDecimal getLineTotal() { return lineTotal; }
     public String getTaxRateCode() { return taxRateCode; }
     public BigDecimal getTaxTotal() { return taxTotal; }
+    public String getIepsRateCode() { return iepsRateCode; }
+    public BigDecimal getIepsTotal() { return iepsTotal; }
 }

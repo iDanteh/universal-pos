@@ -115,7 +115,9 @@ public class ReturnsService {
             String discount,
             String lineTotal,
             String taxRateCode,
-            String taxTotal
+            String taxTotal,
+            String iepsRateCode,
+            String iepsTotal
     ) {
     }
 
@@ -221,10 +223,12 @@ public class ReturnsService {
                                     + requested.toPlainString() + ")");
                 }
 
-                // PRORATION of the snapshot (ADR-019): the refund reproduces
-                // the original line money proportionally — gross = q x price,
-                // net = line_total x q / qty, tax = tax_total x q / qty
-                // (2dp HALF_UP). The customer gets back the SAME tax charged.
+                // PRORATION of the snapshot (ADR-019 + v0.11 · ADR-021): the
+                // refund reproduces the original line money proportionally —
+                // gross = q x price, net = line_total x q / qty, and EACH
+                // traslado separately: ieps = ieps_total x q / qty,
+                // iva = (tax_total - ieps_total) x q / qty (2dp HALF_UP).
+                // The customer gets back the SAME taxes charged.
                 BigDecimal gross = requested.multiply(saleLine.getUnitPrice())
                         .setScale(2, RoundingMode.HALF_UP);
                 BigDecimal net = saleLine.getLineTotal().multiply(requested)
@@ -232,10 +236,17 @@ public class ReturnsService {
                 BigDecimal discount = gross.subtract(net).setScale(4, RoundingMode.HALF_UP);
                 boolean taxed = saleLine.getTaxRateCode() != null
                         && !saleLine.getTaxRateCode().isBlank();
-                BigDecimal tax = taxed
-                        ? saleLine.getTaxTotal().multiply(requested)
+                BigDecimal ieps = saleLine.getIepsRateCode() == null
+                        || saleLine.getIepsRateCode().isBlank()
+                        ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+                        : saleLine.getIepsTotal().multiply(requested)
+                                .divide(saleLine.getQuantity(), 2, RoundingMode.HALF_UP);
+                BigDecimal iva = taxed
+                        ? saleLine.getTaxTotal().subtract(saleLine.getIepsTotal())
+                                .multiply(requested)
                                 .divide(saleLine.getQuantity(), 2, RoundingMode.HALF_UP)
                         : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                BigDecimal tax = ieps.add(iva);
 
                 subtotal = subtotal.add(gross);
                 discountTotal = discountTotal.add(discount);
@@ -244,7 +255,8 @@ public class ReturnsService {
                 returnLines.add(new SaleReturnLine(tenantId, null, saleLine.getId(),
                         saleLine.getVariantId(), saleLine.getProductName(), saleLine.getSku(),
                         saleLine.getUnit(), requested, saleLine.getUnitPrice(), discount,
-                        net, saleLine.getTaxRateCode(), tax));
+                        net, saleLine.getTaxRateCode(), tax,
+                        saleLine.getIepsRateCode(), ieps));
             }
 
             subtotal = subtotal.setScale(2, RoundingMode.HALF_UP);
@@ -269,13 +281,15 @@ public class ReturnsService {
                         tenantId, saleReturn, linePre.getSaleLineId(), linePre.getVariantId(),
                         linePre.getProductName(), linePre.getSku(), linePre.getUnit(),
                         linePre.getQuantity(), linePre.getUnitPrice(), linePre.getDiscount(),
-                        linePre.getLineTotal(), linePre.getTaxRateCode(), linePre.getTaxTotal()));
+                        linePre.getLineTotal(), linePre.getTaxRateCode(), linePre.getTaxTotal(),
+                        linePre.getIepsRateCode(), linePre.getIepsTotal()));
                 lineViews.add(new ReturnLineView(
                         saved.getId(), saved.getSaleLineId(), saved.getVariantId(),
                         saved.getProductName(), saved.getSku(), saved.getUnit(),
                         saved.getQuantity().toPlainString(), saved.getUnitPrice().toPlainString(),
                         saved.getDiscount().toPlainString(), saved.getLineTotal().toPlainString(),
-                        saved.getTaxRateCode(), saved.getTaxTotal().toPlainString()));
+                        saved.getTaxRateCode(), saved.getTaxTotal().toPlainString(),
+                        saved.getIepsRateCode(), saved.getIepsTotal().toPlainString()));
                 stockLines.add(new InventoryService.SaleStockLine(
                         saved.getVariantId(), saved.getQuantity()));
             }
@@ -340,7 +354,8 @@ public class ReturnsService {
                         line.getProductName(), line.getSku(), line.getUnit(),
                         line.getQuantity().toPlainString(), line.getUnitPrice().toPlainString(),
                         line.getDiscount().toPlainString(), line.getLineTotal().toPlainString(),
-                        line.getTaxRateCode(), line.getTaxTotal().toPlainString()))
+                        line.getTaxRateCode(), line.getTaxTotal().toPlainString(),
+                        line.getIepsRateCode(), line.getIepsTotal().toPlainString()))
                 .toList();
 
         // fiscal state of the return: the active NC (if any) and whether the

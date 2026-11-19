@@ -53,7 +53,8 @@ public class CatalogController {
                 String unit,
                 java.util.Map<String, String> attributes,
                 java.math.BigDecimal price,
-                String taxRateCode
+                String taxRateCode,
+                String iepsRateCode
         ) {
         }
     }
@@ -64,7 +65,8 @@ public class CatalogController {
             String unit,
             java.util.Map<String, String> attributes,
             java.math.BigDecimal price,
-            String taxRateCode
+            String taxRateCode,
+            String iepsRateCode
     ) {
     }
 
@@ -80,6 +82,12 @@ public class CatalogController {
     @GetMapping("/taxes")
     public List<CatalogService.TaxRateView> taxes() {
         return catalogService.taxes(currentTenant());
+    }
+
+    /** Federal retention rates (global catalog, v0.11 · ADR-021). */
+    @GetMapping("/withholdings")
+    public List<CatalogService.WithholdingRateView> withholdings() {
+        return catalogService.withholdings(currentTenant());
     }
 
     // ---- Products ----
@@ -98,7 +106,8 @@ public class CatalogController {
                 : request.variants().stream()
                         .map(item -> new VariantCommand(
                                 item.sku(), item.barcode(), item.unit(),
-                                item.attributes(), item.price(), item.taxRateCode()))
+                                item.attributes(), item.price(), item.taxRateCode(),
+                                item.iepsRateCode()))
                         .toList();
         CatalogService.ProductView created = catalogService.createProduct(tenantId, new CreateProductCommand(
                 request.name(), request.description(), request.category(),
@@ -117,7 +126,8 @@ public class CatalogController {
         CatalogService.VariantView created = catalogService.addVariant(tenantId, productId,
                 new AddVariantCommand(
                         request.sku(), request.barcode(), request.unit(),
-                        request.attributes(), request.price(), request.taxRateCode()));
+                        request.attributes(), request.price(), request.taxRateCode(),
+                        request.iepsRateCode()));
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 

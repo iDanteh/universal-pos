@@ -6,6 +6,7 @@ import com.posplatform.modules.invoicing.SatCatalog;
 import com.posplatform.modules.invoicing.fiscal.FiscalProvider;
 import com.posplatform.modules.invoicing.fiscal.FiscalProvider.StampLine;
 import com.posplatform.modules.invoicing.fiscal.FiscalProvider.StampRequest;
+import com.posplatform.modules.invoicing.fiscal.FiscalProvider.StampWithholding;
 import com.posplatform.modules.invoicing.fiscal.MockFiscalProvider;
 import com.posplatform.modules.invoicing.infrastructure.InvoiceLineRepository;
 import com.posplatform.modules.invoicing.infrastructure.InvoiceRepository;
@@ -31,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +69,8 @@ public class InvoicingService {
     private static final Pattern ZIP_PATTERN = Pattern.compile("^\\d{5}$");
     private static final String SERIE = "FA";
     private static final String SERIE_NC = "NC";
+    /** Complemento de pago (fase 11 · ADR-021) — its own folio counter. */
+    private static final String SERIE_PG = "PG";
 
     /** Declared sale units (ADR-010) -> SAT unit keys (Anexo 20 seed subset). */
     private static final Map<String, String> SALE_UNIT_TO_SAT = Map.of(
@@ -91,6 +95,7 @@ public class InvoicingService {
     private final OutboxWriter outboxWriter;
     private final TenantTransactionRunner tenantRunner;
     private final JdbcTemplate jdbc;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     public InvoicingService(InvoiceRepository invoiceRepository,
                             InvoiceLineRepository lineRepository,
@@ -103,7 +108,8 @@ public class InvoicingService {
                             FiscalProvider fiscalProvider,
                             OutboxWriter outboxWriter,
                             TenantTransactionRunner tenantRunner,
-                            JdbcTemplate jdbc) {
+                            JdbcTemplate jdbc,
+                            com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.invoiceRepository = invoiceRepository;
         this.lineRepository = lineRepository;
         this.satCatalogRepository = satCatalogRepository;
@@ -116,6 +122,7 @@ public class InvoicingService {
         this.outboxWriter = outboxWriter;
         this.tenantRunner = tenantRunner;
         this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
     }
 
     // ---- Commands ----
@@ -125,7 +132,8 @@ public class InvoicingService {
     }
 
     public record IssueFromSaleCommand(UUID saleId, UUID legalEntityId,
-                                       ReceptorCommand receptor) {
+                                       ReceptorCommand receptor,
+                                       List<String> withholdings) {
     }
 
     public record IssueGlobalCommand(int periodYear, int periodMonth,
@@ -139,12 +147,22 @@ public class InvoicingService {
     public record IssueCreditNoteCommand(UUID returnId) {
     }
 
+    /** Issue a PAYMENT complement (fase 11 · ADR-021) against a STAMPED FA. */
+    public record IssuePaymentCommand(UUID invoiceId, BigDecimal amount,
+                                      String method, Instant paymentDate) {
+    }
+
     // ---- Views ----
 
     public record InvoiceLineView(UUID id, UUID saleLineId, String description,
                                   String sku, String unitSat, String quantity,
                                   String unitPrice, String discount, String lineTotal,
-                                  String taxRateCode, String taxTotal) {
+                                  String taxRateCode, String taxTotal,
+                                  String iepsRateCode, String iepsTotal) {
+    }
+
+    /** One document-level federal retention of the snapshot (v0.11 · ADR-021). */
+    public record WithholdingView(String code, String scheme, String rate, String amount) {
     }
 
     public record InvoiceView(UUID id, String serie, long folio, String folioLabel,
@@ -157,6 +175,9 @@ public class InvoicingService {
                               String total, String status, String statusReason,
                               String fiscalId, String provider, String stampedAt,
                               String cancelMotive, String cancelNote, String createdAt,
+                              List<WithholdingView> withholdings, String withholdingTotal,
+                              String paymentAmount, String paymentMethod,
+                              String paymentDate, String outstanding,
                               List<InvoiceLineView> lines) {
     }
 
@@ -260,6 +281,22 @@ public class InvoicingService {
                     .findByTenantIdAndSaleIdOrderByCreatedAtAsc(tenantId, sale.getId());
 
             long folio = requireFolio(tenantId, SERIE);
+            List<StampLine> stampLines = new ArrayList<>();
+            for (SaleLine saleLine : saleLines) {
+                stampLines.add(toStampLine(saleLine));
+            }
+
+            // Retenciones federales (v0.11 · ADR-021): DOCUMENT-level snapshot
+            // computed ONCE from the sale's own money — never recomputed.
+            List<StampWithholding> withholds = resolveWithholdings(
+                    command.withholdings(), sale, stampLines);
+            String withholdingJson = withholds.isEmpty() ? null
+                    : snapshotJson(withholds);
+            BigDecimal withholdingTotal = withholds.stream()
+                    .map(StampWithholding::amount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .setScale(2, RoundingMode.HALF_UP);
+
             Invoice invoice = new Invoice(
                     tenantId, emisor.getId(), SERIE, folio, Invoice.Kind.INDIVIDUAL, sale.getId(),
                     MexicanTaxId.requireValid(receptor.rfc()),
@@ -271,14 +308,11 @@ public class InvoicingService {
                     requireZip(receptor.zip(), "El código postal del receptor"),
                     null, null,
                     sale.getSubtotal(), sale.getDiscountTotal(), sale.getTaxTotal(),
-                    sale.getTotal());
+                    sale.getTotal().subtract(withholdingTotal).setScale(2, RoundingMode.HALF_UP));
+            invoice.setWithholding(withholdingJson);
+            invoice.setWithholdingTotal(withholdingTotal);
 
-            List<StampLine> stampLines = new ArrayList<>();
-            for (SaleLine saleLine : saleLines) {
-                stampLines.add(toStampLine(saleLine));
-            }
-
-            stampAndPersist(invoice, stampLines, emisor, "I", null);
+            stampAndPersist(invoice, stampLines, emisor, "I", null, withholds);
 
             outboxWriter.append(tenantId, "invoicing.invoice.issued", "invoice", invoice.getId(),
                     Map.of("folioLabel", folioLabel(invoice),
@@ -352,12 +386,13 @@ public class InvoicingService {
                                 AggregatedConcept fresh = new AggregatedConcept(
                                         key, saleLine.getProductName() + " " + saleLine.getSku(),
                                         saleLine.getSku(), toSatUnit(saleLine.getUnit()),
-                                        saleLine.getTaxRateCode(), meta);
+                                        saleLine.getTaxRateCode(), meta,
+                                        saleLine.getIepsRateCode());
                                 concepts.add(fresh);
                                 return fresh;
                             });
                     concept.add(saleLine.getQuantity(), saleLine.getLineTotal(),
-                            saleLine.getTaxTotal());
+                            saleLine.getTaxTotal(), saleLine.getIepsTotal());
                 }
             }
 
@@ -369,6 +404,10 @@ public class InvoicingService {
                 BigDecimal lineTotal = concept.lineTotalSum().setScale(2, RoundingMode.HALF_UP);
                 BigDecimal unitPrice = lineTotal.divide(quantity, 4, RoundingMode.HALF_UP);
                 BigDecimal taxTotal = concept.taxTotalSum().setScale(2, RoundingMode.HALF_UP);
+                BigDecimal iepsTotal = concept.iepsTotalSum().setScale(2, RoundingMode.HALF_UP);
+                TaxMeta iepsMeta = concept.iepsRateCode() == null
+                        ? null : requireTaxMeta(concept.iepsRateCode());
+                // the IVA slot carries tax_total MINUS the IEPS part
                 stampLines.add(new StampLine(concept.description(), concept.sku(),
                         concept.unitSat(), quantity, unitPrice,
                         BigDecimal.ZERO.setScale(4), lineTotal,
@@ -376,9 +415,14 @@ public class InvoicingService {
                         concept.taxMeta() == null ? null : concept.taxMeta().scheme(),
                         concept.taxMeta() == null ? null : concept.taxMeta().factor(),
                         concept.taxMeta() == null ? null : concept.taxMeta().rate(),
-                        taxTotal));
+                        taxTotal.subtract(iepsTotal),
+                        concept.iepsRateCode(),
+                        iepsMeta == null ? null : iepsMeta.scheme(),
+                        iepsMeta == null ? null : iepsMeta.factor(),
+                        iepsMeta == null ? null : iepsMeta.rate(),
+                        iepsTotal));
                 conceptSnapshots.add(new ConceptSnapshot(concept, quantity, unitPrice,
-                        lineTotal, taxTotal));
+                        lineTotal, taxTotal.subtract(iepsTotal), iepsTotal));
                 subtotal = subtotal.add(lineTotal);
                 taxSum = taxSum.add(taxTotal);
             }
@@ -404,7 +448,7 @@ public class InvoicingService {
                     invoice.getReceptorRfc(), invoice.getReceptorName(),
                     invoice.getReceptorRegime(), invoice.getReceptorUse(), invoice.getReceptorZip(),
                     stampLines, invoice.getSubtotal(), invoice.getDiscountTotal(),
-                    invoice.getTaxTotal(), invoice.getTotal(), null));
+                    invoice.getTaxTotal(), invoice.getTotal(), null, List.of()));
             invoice.stamp(stamp.fiscalId(), stamp.stampedAt());
             invoice.setSatDocument(stamp.detailJson());
             invoiceRepository.saveAndFlush(invoice);
@@ -416,13 +460,15 @@ public class InvoicingService {
                         snapshot.aggregate().sku(), snapshot.aggregate().unitSat(),
                         snapshot.quantity(), snapshot.unitPrice(),
                         BigDecimal.ZERO.setScale(4), snapshot.lineTotal(),
-                        snapshot.aggregate().taxRateCode(), snapshot.taxTotal()));
+                        snapshot.aggregate().taxRateCode(), snapshot.ivaTotal(),
+                        snapshot.aggregate().iepsRateCode(), snapshot.iepsTotal()));
                 lineViews.add(new InvoiceLineView(
                         saved.getId(), null, saved.getDescription(), saved.getSku(),
                         saved.getUnitSat(), saved.getQuantity().toPlainString(),
                         saved.getUnitPrice().toPlainString(), saved.getDiscount().toPlainString(),
                         saved.getLineTotal().toPlainString(),
-                        saved.getTaxRateCode(), saved.getTaxTotal().toPlainString()));
+                        saved.getTaxRateCode(), saved.getTaxTotal().toPlainString(),
+                        saved.getIepsRateCode(), saved.getIepsTotal().toPlainString()));
             }
 
             outboxWriter.append(tenantId, "invoicing.invoice.global_issued", "invoice",
@@ -446,6 +492,8 @@ public class InvoicingService {
                     invoice.getFiscalId().toString(), invoice.getProvider(),
                     invoice.getStampedAt().toString(), invoice.getCancelMotive(),
                     invoice.getCancelNote(), invoice.getCreatedAt().toString(),
+                    List.of(), invoice.getWithholdingTotal().toPlainString(),
+                    null, null, null, null,
                     lineViews);
         });
     }
@@ -511,6 +559,7 @@ public class InvoicingService {
             for (SaleReturnLine line : returnLineRepository
                     .findByTenantIdAndSaleReturn_IdOrderByCreatedAtAsc(tenantId, saleReturn.getId())) {
                 TaxMeta meta = requireTaxMeta(line.getTaxRateCode());
+                TaxMeta iepsMeta = requireTaxMeta(line.getIepsRateCode());
                 stampLines.add(new StampLine(
                         line.getProductName() + " " + line.getSku(),
                         line.getSku(), toSatUnit(line.getUnit()),
@@ -520,11 +569,17 @@ public class InvoicingService {
                         meta == null ? null : meta.scheme(),
                         meta == null ? null : meta.factor(),
                         meta == null ? null : meta.rate(),
-                        line.getTaxTotal()));
+                        // the IVA slot carries the traslado(s) minus the IEPS part
+                        line.getTaxTotal().subtract(line.getIepsTotal()),
+                        line.getIepsRateCode(),
+                        iepsMeta == null ? null : iepsMeta.scheme(),
+                        iepsMeta == null ? null : iepsMeta.factor(),
+                        iepsMeta == null ? null : iepsMeta.rate(),
+                        line.getIepsTotal()));
             }
 
             stampAndPersist(creditNote, stampLines, emisor, "E",
-                    relatedInvoice.getFiscalId());
+                    relatedInvoice.getFiscalId(), List.of());
 
             outboxWriter.append(tenantId, "invoicing.creditnote.issued", "invoice",
                     creditNote.getId(),
@@ -536,6 +591,145 @@ public class InvoicingService {
 
             return viewOf(tenantId, creditNote);
         });
+    }
+
+    // ---- Issue: payment complement (fase 11 · ADR-021, CFDI tipo P) ----
+
+    /**
+     * PAYMENT complement against a STAMPED income CFDI: the settled amount,
+     * the SAT forma de pago and the outstanding-balance rule (fail-closed:
+     * PAG_TARGET_NOT_STAMPED / PAG_OVER_BALANCE). Multiple partial payments
+     * are allowed; a CANCELED complement releases its amount. No idempotency
+     * key: the balance itself is the guard (an exact repeat changes nothing).
+     */
+    @Transactional
+    public InvoiceView issuePaymentComplement(UUID tenantId, IssuePaymentCommand command) {
+        return tenantRunner.run(tenantId, () -> {
+            if (command.invoiceId() == null) {
+                throw new IllegalArgumentException("El invoiceId es requerido");
+            }
+            BigDecimal amount = requirePositiveMoney(command.amount());
+
+            Invoice target = invoiceRepository.findByTenantIdAndId(tenantId, command.invoiceId())
+                    .orElseThrow(() -> new NotFoundException("invoice",
+                            command.invoiceId().toString()));
+            if (target.getKind() != Invoice.Kind.INDIVIDUAL
+                    && target.getKind() != Invoice.Kind.GLOBAL) {
+                throw new ConflictException("PAG_TARGET_INVALID",
+                        "Solo un CFDI de ingreso (FA o global) recibe complementos de pago");
+            }
+            if (target.getStatus() != Invoice.Status.STAMPED
+                    || target.getFiscalId() == null) {
+                throw new ConflictException("PAG_TARGET_NOT_STAMPED",
+                        "La factura " + folioLabel(target) + " aún no está timbrada: "
+                                + "el complemento referencia su folio fiscal");
+            }
+            String method = requireCatalogCode(SatCatalog.Catalog.FORMA_PAGO,
+                    command.method(), "La forma de pago");
+            BigDecimal applied = jdbc.queryForObject(
+                    "SELECT COALESCE(SUM(total), 0) FROM invoice "
+                            + "WHERE tenant_id = ? AND kind = 'PAYMENT' "
+                            + "AND related_invoice_id = ? AND status = 'STAMPED'",
+                    BigDecimal.class, tenantId, target.getId());
+            BigDecimal outstanding = target.getTotal()
+                    .subtract(applied == null ? BigDecimal.ZERO : applied)
+                    .setScale(2, RoundingMode.HALF_UP);
+            if (amount.compareTo(outstanding) > 0) {
+                throw new ConflictException("PAG_OVER_BALANCE",
+                        "El monto " + amount.toPlainString() + " excede el saldo "
+                                + "pendiente de " + folioLabel(target) + " ("
+                                + outstanding.toPlainString() + ")");
+            }
+            Instant paymentDate = command.paymentDate() == null
+                    ? Instant.now() : command.paymentDate();
+
+            LegalEntity emisor = resolveEmisor(tenantId, target.getLegalEntityId());
+            long folio = requireFolio(tenantId, SERIE_PG);
+            Invoice pago = Invoice.paymentComplement(
+                    tenantId, emisor.getId(), SERIE_PG, folio, target.getId(),
+                    target.getReceptorRfc(), target.getReceptorName(),
+                    target.getReceptorRegime(), target.getReceptorUse(),
+                    target.getReceptorZip(), amount, method, paymentDate);
+
+            // CFDI tipo P: ONE concept (ClaveProdServ 84111506), no taxes.
+            StampLine paymentLine = new StampLine("Pago", null, "ACT",
+                    BigDecimal.ONE.setScale(4), amount, BigDecimal.ZERO.setScale(4),
+                    amount, null, null, null, null, BigDecimal.ZERO.setScale(2),
+                    null, null, null, null, BigDecimal.ZERO.setScale(2));
+            stampAndPersist(pago, List.of(paymentLine), emisor, "P",
+                    target.getFiscalId(), List.of());
+
+            outboxWriter.append(tenantId, "invoicing.payment.issued", "invoice",
+                    pago.getId(),
+                    Map.of("folioLabel", folioLabel(pago),
+                            "relatedFolio", folioLabel(target),
+                            "amount", amount.toPlainString(),
+                            "method", method,
+                            "fiscalId", pago.getFiscalId().toString()));
+
+            return viewOf(tenantId, pago);
+        });
+    }
+
+    /** 2dp positive money validation for the payment command (400 semantics). */
+    private static BigDecimal requirePositiveMoney(BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("El monto del pago debe ser positivo");
+        }
+        return amount.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Federal retenciones (v0.11 · ADR-021): the SNAPSHOT built at issuance
+     * from the global withholding_rate catalog (V19, same law as tax_rate).
+     * Every amount = docNet x rate, 2dp HALF_UP. IVA-scheme retentions
+     * require the document to actually carry an IVA traslado.
+     */
+    private List<StampWithholding> resolveWithholdings(List<String> codes, Sale sale,
+                                                       List<StampLine> stampLines) {
+        if (codes == null || codes.isEmpty()) {
+            return List.of();
+        }
+        BigDecimal net = sale.getSubtotal().subtract(sale.getDiscountTotal())
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal iepsTotal = stampLines.stream()
+                .map(line -> line.iepsTotal() == null
+                        ? BigDecimal.ZERO : line.iepsTotal())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal ivaTotal = sale.getTaxTotal().subtract(iepsTotal)
+                .setScale(2, RoundingMode.HALF_UP);
+        List<StampWithholding> result = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String code : codes) {
+            if (code == null || code.isBlank()) {
+                throw new IllegalArgumentException("La retención no puede ir vacía");
+            }
+            String normalized = code.trim().toUpperCase(java.util.Locale.ROOT);
+            if (!seen.add(normalized)) {
+                throw new IllegalArgumentException(
+                        "La retención " + normalized + " está duplicada");
+            }
+            List<StampWithholding> found = jdbc.query(
+                    "SELECT code, scheme, rate FROM withholding_rate WHERE code = ?",
+                    (rs, i) -> new StampWithholding(rs.getString(1), rs.getString(2),
+                            "TASA", rs.getBigDecimal(3), null),
+                    normalized);
+            if (found.isEmpty()) {
+                throw new IllegalArgumentException("La retención '" + normalized
+                        + "' no existe en el catálogo de retenciones");
+            }
+            StampWithholding template = found.getFirst();
+            BigDecimal amount = net.multiply(template.rate())
+                    .setScale(2, RoundingMode.HALF_UP);
+            if ("IVA".equals(template.scheme()) && ivaTotal.signum() <= 0) {
+                throw new ConflictException("WITHHOLDING_REQUIRES_IVA",
+                        "La retención " + normalized + " exige un documento con "
+                                + "IVA trasladado (este CFDI no lleva IVA)");
+            }
+            result.add(new StampWithholding(template.code(), template.scheme(),
+                    template.factor(), template.rate(), amount));
+        }
+        return result;
     }
 
     // ---- Cancel (SAT motive) ----
@@ -591,11 +785,12 @@ public class InvoicingService {
     /**
      * Shared stamp+persistence for the issue paths (same transaction). The
      * document type comes from the invoice KIND (I for income, E for credit
-     * notes) and an egreso carries the related FA's folio fiscal.
+     * notes, P for payment complements) and an egreso carries the related
+     * FA's folio fiscal.
      */
     private void stampAndPersist(Invoice invoice, List<StampLine> stampLines,
                                  LegalEntity emisor, String documentType,
-                                 UUID relatedFiscalId) {
+                                 UUID relatedFiscalId, List<StampWithholding> withholds) {
         StampRequest request = new StampRequest(
                 invoice.getSerie(), invoice.getFolio(),
                 documentType,
@@ -604,7 +799,7 @@ public class InvoicingService {
                 invoice.getReceptorRfc(), invoice.getReceptorName(),
                 invoice.getReceptorRegime(), invoice.getReceptorUse(), invoice.getReceptorZip(),
                 stampLines, invoice.getSubtotal(), invoice.getDiscountTotal(),
-                invoice.getTaxTotal(), invoice.getTotal(), relatedFiscalId);
+                invoice.getTaxTotal(), invoice.getTotal(), relatedFiscalId, withholds);
 
         FiscalProvider.StampResult stamp;
         try {
@@ -624,7 +819,8 @@ public class InvoicingService {
                     invoice.getTenantId(), invoice, null, line.description(), line.sku(),
                     line.unitSat(), line.quantity(), line.unitPrice(),
                     line.discount(), line.lineTotal(),
-                    line.taxRateCode(), line.taxTotal()));
+                    line.taxRateCode(), line.taxTotal(),
+                    line.iepsRateCode(), line.iepsTotal()));
         }
     }
 
@@ -637,8 +833,23 @@ public class InvoicingService {
                         line.getSku(), line.getUnitSat(),
                         line.getQuantity().toPlainString(), line.getUnitPrice().toPlainString(),
                         line.getDiscount().toPlainString(), line.getLineTotal().toPlainString(),
-                        line.getTaxRateCode(), line.getTaxTotal().toPlainString()))
+                        line.getTaxRateCode(), line.getTaxTotal().toPlainString(),
+                        line.getIepsRateCode(), line.getIepsTotal().toPlainString()))
                 .toList();
+        // Saldo pendiente of an income document: total minus the STAMPED
+        // payment complements applied to it (v0.11 · ADR-021).
+        String outstanding = null;
+        if (invoice.getKind() == Invoice.Kind.INDIVIDUAL
+                || invoice.getKind() == Invoice.Kind.GLOBAL) {
+            BigDecimal applied = jdbc.queryForObject(
+                    "SELECT COALESCE(SUM(total), 0) FROM invoice "
+                            + "WHERE tenant_id = ? AND kind = 'PAYMENT' "
+                            + "AND related_invoice_id = ? AND status = 'STAMPED'",
+                    BigDecimal.class, tenantId, invoice.getId());
+            outstanding = invoice.getTotal().subtract(applied == null
+                    ? BigDecimal.ZERO : applied).setScale(2, RoundingMode.HALF_UP)
+                    .toPlainString();
+        }
         return new InvoiceView(
                 invoice.getId(), invoice.getSerie(), invoice.getFolio(), folioLabel(invoice),
                 String.valueOf(invoice.getKind()), invoice.getSaleId(),
@@ -653,7 +864,40 @@ public class InvoicingService {
                 invoice.getProvider(),
                 invoice.getStampedAt() == null ? null : invoice.getStampedAt().toString(),
                 invoice.getCancelMotive(), invoice.getCancelNote(),
-                invoice.getCreatedAt().toString(), lines);
+                invoice.getCreatedAt().toString(),
+                parseWithholdings(invoice.getWithholding()),
+                invoice.getWithholdingTotal().toPlainString(),
+                invoice.getPaymentAmount() == null ? null : invoice.getPaymentAmount().toPlainString(),
+                invoice.getPaymentMethod(),
+                invoice.getPaymentDate() == null ? null : invoice.getPaymentDate().toString(),
+                outstanding,
+                lines);
+    }
+
+    /** Deserializes the retention snapshot (null-safe, fail-closed to empty). */
+    private List<WithholdingView> parseWithholdings(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            WithholdingView[] rows = objectMapper.readValue(json, WithholdingView[].class);
+            return List.of(rows);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Snapshot de retenciones corrupto", ex);
+        }
+    }
+
+    /** Serializes the retention snapshot into the invoice's jsonb column. */
+    private String snapshotJson(List<StampWithholding> withholds) {
+        try {
+            return objectMapper.writeValueAsString(withholds.stream()
+                    .map(wh -> Map.of("code", wh.code(), "scheme", wh.scheme(),
+                            "rate", wh.rate().toPlainString(), "amount",
+                            wh.amount().toPlainString()))
+                    .toList());
+        } catch (Exception ex) {
+            throw new IllegalStateException("No se pudo serializar el snapshot de retenciones", ex);
+        }
     }
 
     private EmisorView toEmisorView(LegalEntity entity) {
@@ -771,9 +1015,13 @@ public class InvoicingService {
     private record TaxMeta(String scheme, String factor, BigDecimal rate) {
     }
 
-    /** Stamp line mirroring the sale line 1:1, taxes SNAPSHOT never re-billed. */
+    /** Stamp line mirroring the sale line 1:1, taxes SNAPSHOT never re-billed.
+     * Dual traslado slots (v0.11 · ADR-021): taxTotal minus the IEPS part is
+     * the IVA-slot amount (whose scheme may itself be IEPS on legacy lines),
+     * iepsTotal is the IEPS-slot amount. */
     private StampLine toStampLine(SaleLine saleLine) {
         TaxMeta meta = requireTaxMeta(saleLine.getTaxRateCode());
+        TaxMeta iepsMeta = requireTaxMeta(saleLine.getIepsRateCode());
         return new StampLine(
                 saleLine.getProductName() + " " + saleLine.getSku(),
                 saleLine.getSku(), toSatUnit(saleLine.getUnit()),
@@ -783,7 +1031,12 @@ public class InvoicingService {
                 meta == null ? null : meta.scheme(),
                 meta == null ? null : meta.factor(),
                 meta == null ? null : meta.rate(),
-                saleLine.getTaxTotal());
+                saleLine.getTaxTotal().subtract(saleLine.getIepsTotal()),
+                saleLine.getIepsRateCode(),
+                iepsMeta == null ? null : iepsMeta.scheme(),
+                iepsMeta == null ? null : iepsMeta.factor(),
+                iepsMeta == null ? null : iepsMeta.rate(),
+                saleLine.getIepsTotal());
     }
 
     /**
@@ -816,18 +1069,21 @@ public class InvoicingService {
         private final String unitSat;
         private final String taxRateCode;
         private final TaxMeta taxMeta;
+        private final String iepsRateCode;
         private BigDecimal quantitySum = BigDecimal.ZERO;
         private BigDecimal lineTotalSum = BigDecimal.ZERO;
         private BigDecimal taxTotalSum = BigDecimal.ZERO;
+        private BigDecimal iepsTotalSum = BigDecimal.ZERO;
 
         AggregatedConcept(String key, String description, String sku, String unitSat,
-                          String taxRateCode, TaxMeta taxMeta) {
+                          String taxRateCode, TaxMeta taxMeta, String iepsRateCode) {
             this.key = key;
             this.description = description;
             this.sku = sku;
             this.unitSat = unitSat;
             this.taxRateCode = taxRateCode;
             this.taxMeta = taxMeta;
+            this.iepsRateCode = iepsRateCode;
         }
 
         String key() { return key; }
@@ -836,20 +1092,24 @@ public class InvoicingService {
         String unitSat() { return unitSat; }
         String taxRateCode() { return taxRateCode; }
         TaxMeta taxMeta() { return taxMeta; }
+        String iepsRateCode() { return iepsRateCode; }
         BigDecimal quantitySum() { return quantitySum; }
         BigDecimal lineTotalSum() { return lineTotalSum; }
         BigDecimal taxTotalSum() { return taxTotalSum; }
+        BigDecimal iepsTotalSum() { return iepsTotalSum; }
 
-        void add(BigDecimal quantity, BigDecimal lineTotal, BigDecimal taxTotal) {
+        void add(BigDecimal quantity, BigDecimal lineTotal, BigDecimal taxTotal,
+                 BigDecimal iepsTotal) {
             this.quantitySum = this.quantitySum.add(quantity);
             this.lineTotalSum = this.lineTotalSum.add(lineTotal);
             this.taxTotalSum = this.taxTotalSum.add(taxTotal);
+            this.iepsTotalSum = this.iepsTotalSum.add(iepsTotal);
         }
     }
 
     /** Frozen value of one aggregated concept at build time. */
     private record ConceptSnapshot(AggregatedConcept aggregate, BigDecimal quantity,
                                    BigDecimal unitPrice, BigDecimal lineTotal,
-                                   BigDecimal taxTotal) {
+                                   BigDecimal ivaTotal, BigDecimal iepsTotal) {
     }
 }

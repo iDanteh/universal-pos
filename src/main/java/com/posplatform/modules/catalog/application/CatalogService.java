@@ -75,7 +75,8 @@ public class CatalogService {
             @NotBlank @Size(max = 8) String unit,
             Map<String, String> attributes,
             BigDecimal price,
-            String taxRateCode
+            String taxRateCode,
+            String iepsRateCode
     ) {
     }
 
@@ -94,7 +95,8 @@ public class CatalogService {
             @NotBlank @Size(max = 8) String unit,
             Map<String, String> attributes,
             BigDecimal price,
-            String taxRateCode
+            String taxRateCode,
+            String iepsRateCode
     ) {
     }
 
@@ -124,6 +126,15 @@ public class CatalogService {
     ) {
     }
 
+    /** Federal retention rate (V19 · ADR-021): the invoice form's dropdown. */
+    public record WithholdingRateView(
+            String code,
+            String scheme,
+            String rate,
+            String description
+    ) {
+    }
+
     public record VariantView(
             UUID id,
             String sku,
@@ -132,6 +143,7 @@ public class CatalogService {
             Map<String, String> attributes,
             String price,
             String taxRateCode,
+            String iepsRateCode,
             String status
     ) {
         static VariantView of(ProductVariant variant) {
@@ -143,6 +155,7 @@ public class CatalogService {
                     variant.getAttributes(),
                     variant.getPrice() == null ? null : variant.getPrice().toPlainString(),
                     variant.getTaxRateCode(),
+                    variant.getIepsRateCode(),
                     String.valueOf(variant.getStatus()));
         }
     }
@@ -211,7 +224,8 @@ public class CatalogService {
             ProductVariant variant = saveVariant(tenantId, product, profile,
                     new VariantCommand(
                             command.sku(), command.barcode(), command.unit(),
-                            command.attributes(), command.price(), command.taxRateCode()));
+                            command.attributes(), command.price(), command.taxRateCode(),
+                            command.iepsRateCode()));
 
             outboxWriter.append(
                     tenantId, "catalog.variant.added", "product_variant", variant.getId(),
@@ -289,6 +303,21 @@ public class CatalogService {
                         rs.getString("description"))));
     }
 
+    /** Federal retention rates (global catalog, V19 · ADR-021) for the invoice form. */
+    @Transactional(readOnly = true)
+    public List<WithholdingRateView> withholdings(UUID tenantId) {
+        return tenantRunner.run(tenantId, () -> jdbc.query("""
+                        SELECT code, scheme, rate, description
+                        FROM withholding_rate
+                        ORDER BY scheme, rate DESC, code
+                        """,
+                (rs, i) -> new WithholdingRateView(
+                        rs.getString("code"),
+                        rs.getString("scheme"),
+                        rs.getBigDecimal("rate").toPlainString(),
+                        rs.getString("description"))));
+    }
+
     // ---- Internals ----
 
     private ProductVariant saveVariant(UUID tenantId, Product product,
@@ -302,6 +331,7 @@ public class CatalogService {
         requireAttributes(profile, command.attributes());
         validatePrice(command.price());
         String taxRateCode = requireValidTaxRateCode(command.taxRateCode());
+        String iepsRateCode = requireValidIepsRateCode(command.iepsRateCode());
 
         return variantRepository.save(new ProductVariant(
                 tenantId,
@@ -311,7 +341,8 @@ public class CatalogService {
                 command.unit(),
                 command.attributes(),
                 command.price(),
-                taxRateCode));
+                taxRateCode,
+                iepsRateCode));
     }
 
     private VerticalProfile.Profile profileOf(UUID tenantId) {
@@ -371,6 +402,25 @@ public class CatalogService {
                 (rs, i) -> rs.getString(1), trimmed);
         if (found.isEmpty()) {
             throw new IllegalArgumentException("La tasa de impuesto '" + trimmed
+                    + "' no existe en el catálogo de impuestos");
+        }
+        return trimmed;
+    }
+
+    /**
+     * IEPS slot rule (v0.11 · ADR-021): the code must exist AND belong to the
+     * IEPS scheme — the IVA slot never hosts IEPS again. Blank = sin IEPS.
+     */
+    private String requireValidIepsRateCode(String code) {
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        String trimmed = code.trim().toUpperCase(Locale.ROOT);
+        List<String> found = jdbc.query(
+                "SELECT code FROM tax_rate WHERE code = ? AND scheme = 'IEPS' AND active = true",
+                (rs, i) -> rs.getString(1), trimmed);
+        if (found.isEmpty()) {
+            throw new IllegalArgumentException("La tasa IEPS '" + trimmed
                     + "' no existe en el catálogo de impuestos");
         }
         return trimmed;
