@@ -57,8 +57,46 @@ public interface FiscalProvider {
             /** For "E": fiscal UUID of the related income CFDI (TipoRelacion 01). */
             UUID relatedFiscalId,
             /** Federal retenciones SNAPSHOT (v0.11 · ADR-021, document level). */
-            List<StampWithholding> withholdings
+            List<StampWithholding> withholdings,
+            /**
+             * SAT FormaPago of an I/E document (v0.12 · ADR-022): "01"
+             * efectivo, "03" transferencia, "04" tarjeta, "99" por definir.
+             * Ignored for "P" (the forma lives in {@link PaymentInfo}).
+             */
+            String paymentForm,
+            /** Complemento de pago 2.0 data; REQUIRED for "P", null otherwise. */
+            PaymentInfo payment,
+            /** InformacionGlobal (RFC XAXX010101000); null for non-global CFDI. */
+            GlobalInfo global
     ) {
+    }
+
+    /**
+     * Complemento de pago 2.0 snapshot (v0.12 · ADR-022): everything the
+     * {@code pago20:Pago}/{@code DoctoRelacionado} needs. The balance figures
+     * come from the SAME invoice ledger that enforces PAG_OVER_BALANCE, so a
+     * stamped complement can never disagree with our own receivable.
+     */
+    record PaymentInfo(
+            /** SAT forma de pago of the payment (c_FormaPago, e.g. "03"). */
+            String formaPago,
+            /** Monto pagado (equals the P document Total). */
+            BigDecimal amount,
+            /** When the payment happened (FechaPago). */
+            Instant date,
+            /** ImpSaldoAnt: outstanding BEFORE this payment. */
+            BigDecimal outstandingBefore,
+            /** ImpSaldoInsoluto: outstanding AFTER this payment. */
+            BigDecimal outstandingAfter,
+            /** NumParcialidad: 1-based payment number for the related CFDI. */
+            int partiality,
+            /** ObjetoImpDR: the related CFDI carried traslados ("02") or not ("01"). */
+            boolean relatedTaxed
+    ) {
+    }
+
+    /** CFDI 4.0 InformacionGlobal for the monthly public-in-general invoice. */
+    record GlobalInfo(int year, int month) {
     }
 
     /**

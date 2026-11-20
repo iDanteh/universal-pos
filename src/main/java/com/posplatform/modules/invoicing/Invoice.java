@@ -216,6 +216,11 @@ public class Invoice extends Auditable {
         this.statusReason = null;
     }
 
+    /** Provider that produced the folio fiscal (MOCK / HTTP · v0.12). */
+    public void setProvider(String provider) {
+        this.provider = provider;
+    }
+
     /** Cancellation with SAT motive + note. */
     public void cancel(String motive, String note) {
         this.status = Status.CANCELED;

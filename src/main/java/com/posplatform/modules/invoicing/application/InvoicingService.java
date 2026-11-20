@@ -4,6 +4,8 @@ import com.posplatform.modules.invoicing.Invoice;
 import com.posplatform.modules.invoicing.InvoiceLine;
 import com.posplatform.modules.invoicing.SatCatalog;
 import com.posplatform.modules.invoicing.fiscal.FiscalProvider;
+import com.posplatform.modules.invoicing.fiscal.FiscalProvider.GlobalInfo;
+import com.posplatform.modules.invoicing.fiscal.FiscalProvider.PaymentInfo;
 import com.posplatform.modules.invoicing.fiscal.FiscalProvider.StampLine;
 import com.posplatform.modules.invoicing.fiscal.FiscalProvider.StampRequest;
 import com.posplatform.modules.invoicing.fiscal.FiscalProvider.StampWithholding;
@@ -312,7 +314,8 @@ public class InvoicingService {
             invoice.setWithholding(withholdingJson);
             invoice.setWithholdingTotal(withholdingTotal);
 
-            stampAndPersist(invoice, stampLines, emisor, "I", null, withholds);
+            stampAndPersist(invoice, stampLines, emisor, "I", null, withholds,
+                    salePaymentForm(tenantId, sale.getId()), null);
 
             outboxWriter.append(tenantId, "invoicing.invoice.issued", "invoice", invoice.getId(),
                     Map.of("folioLabel", folioLabel(invoice),
@@ -448,8 +451,10 @@ public class InvoicingService {
                     invoice.getReceptorRfc(), invoice.getReceptorName(),
                     invoice.getReceptorRegime(), invoice.getReceptorUse(), invoice.getReceptorZip(),
                     stampLines, invoice.getSubtotal(), invoice.getDiscountTotal(),
-                    invoice.getTaxTotal(), invoice.getTotal(), null, List.of()));
+                    invoice.getTaxTotal(), invoice.getTotal(), null, List.of(),
+                    "99", null, new GlobalInfo(year, month)));
             invoice.stamp(stamp.fiscalId(), stamp.stampedAt());
+            invoice.setProvider(fiscalProvider.name());
             invoice.setSatDocument(stamp.detailJson());
             invoiceRepository.saveAndFlush(invoice);
 
@@ -579,7 +584,9 @@ public class InvoicingService {
             }
 
             stampAndPersist(creditNote, stampLines, emisor, "E",
-                    relatedInvoice.getFiscalId(), List.of());
+                    relatedInvoice.getFiscalId(), List.of(),
+                    satPaymentForm(saleReturn.getRefundMethod() == null ? null
+                            : saleReturn.getRefundMethod().name()), null);
 
             outboxWriter.append(tenantId, "invoicing.creditnote.issued", "invoice",
                     creditNote.getId(),
@@ -656,8 +663,19 @@ public class InvoicingService {
                     BigDecimal.ONE.setScale(4), amount, BigDecimal.ZERO.setScale(4),
                     amount, null, null, null, null, BigDecimal.ZERO.setScale(2),
                     null, null, null, null, BigDecimal.ZERO.setScale(2));
+            // Complemento 2.0 snapshot: the SAME ledger that enforced the
+            // balance guard supplies saldo anterior/insoluto and parcialidad.
+            Integer priorPayments = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM invoice WHERE tenant_id = ? AND kind = 'PAYMENT' "
+                            + "AND related_invoice_id = ? AND status = 'STAMPED'",
+                    Integer.class, tenantId, target.getId());
+            PaymentInfo paymentInfo = new PaymentInfo(
+                    method, amount, paymentDate, outstanding,
+                    outstanding.subtract(amount).setScale(2, RoundingMode.HALF_UP),
+                    (priorPayments == null ? 0 : priorPayments) + 1,
+                    target.getTaxTotal() != null && target.getTaxTotal().signum() > 0);
             stampAndPersist(pago, List.of(paymentLine), emisor, "P",
-                    target.getFiscalId(), List.of());
+                    target.getFiscalId(), List.of(), method, paymentInfo);
 
             outboxWriter.append(tenantId, "invoicing.payment.issued", "invoice",
                     pago.getId(),
@@ -677,6 +695,31 @@ public class InvoicingService {
             throw new IllegalArgumentException("El monto del pago debe ser positivo");
         }
         return amount.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * SAT FormaPago of an income/egreso CFDI (v0.12 · ADR-022). The sale
+     * tender (CASH/CARD/TRANSFER/OTHER) maps to the Anexo 20 catalog; an
+     * unknown tender never blocks the sale and travels as "99" (por definir).
+     */
+    private String salePaymentForm(UUID tenantId, UUID saleId) {
+        List<String> methods = jdbc.queryForList(
+                "SELECT method FROM sale_payment WHERE tenant_id = ? AND sale_id = ? "
+                        + "ORDER BY created_at LIMIT 1",
+                String.class, tenantId, saleId);
+        return methods.isEmpty() ? "99" : satPaymentForm(methods.getFirst());
+    }
+
+    private static String satPaymentForm(String method) {
+        if (method == null || method.isBlank()) {
+            return "99";
+        }
+        return switch (method.trim().toUpperCase(java.util.Locale.ROOT)) {
+            case "CASH", "01" -> "01";
+            case "CARD", "04", "28" -> "04";
+            case "TRANSFER", "03" -> "03";
+            default -> "99";
+        };
     }
 
     /**
@@ -790,7 +833,11 @@ public class InvoicingService {
      */
     private void stampAndPersist(Invoice invoice, List<StampLine> stampLines,
                                  LegalEntity emisor, String documentType,
-                                 UUID relatedFiscalId, List<StampWithholding> withholds) {
+                                 UUID relatedFiscalId, List<StampWithholding> withholds,
+                                 String paymentForm, PaymentInfo payment) {
+        GlobalInfo global = invoice.getKind() == Invoice.Kind.GLOBAL
+                ? new GlobalInfo(invoice.getPeriodYear(), invoice.getPeriodMonth())
+                : null;
         StampRequest request = new StampRequest(
                 invoice.getSerie(), invoice.getFolio(),
                 documentType,
@@ -799,7 +846,8 @@ public class InvoicingService {
                 invoice.getReceptorRfc(), invoice.getReceptorName(),
                 invoice.getReceptorRegime(), invoice.getReceptorUse(), invoice.getReceptorZip(),
                 stampLines, invoice.getSubtotal(), invoice.getDiscountTotal(),
-                invoice.getTaxTotal(), invoice.getTotal(), relatedFiscalId, withholds);
+                invoice.getTaxTotal(), invoice.getTotal(), relatedFiscalId, withholds,
+                paymentForm, payment, global);
 
         FiscalProvider.StampResult stamp;
         try {
@@ -811,6 +859,7 @@ public class InvoicingService {
             throw ex;
         }
         invoice.stamp(stamp.fiscalId(), stamp.stampedAt());
+        invoice.setProvider(fiscalProvider.name());
         invoice.setSatDocument(stamp.detailJson());
         invoiceRepository.saveAndFlush(invoice);
 

@@ -47,13 +47,28 @@ management:
       enabled: true
 
 posplatform:
-  version: 0.11.0
+  version: 0.12.0
   cors:
     allowed-origins: ${POSPLATFORM_CORS_ORIGINS:http://localhost:5173}
   fiscal:
-    # PAC selection (ADR-016): MOCK sandbox stamps validly-shaped documents
-    # instantly; a real PAC lands as a new bean behind the same port.
-    provider: mock
+    # PAC selection (ADR-016 + ADR-022): MOCK sandbox stamps validly-shaped
+    # documents instantly; "http" seals with the CSD and calls a PAC gateway.
+    provider: ${POSPLATFORM_FISCAL_PROVIDER:mock}
+    # CFDI Fecha time zone (SAT expects local Mexico time, no offset).
+    time-zone: ${POSPLATFORM_FISCAL_TIME_ZONE:America/Mexico_City}
+    # CSD (Certificado de Sello Digital). Empty = Mock-only. NEVER commit
+    # real .cer/.key files nor the password.
+    csd:
+      certificate: ${POSPLATFORM_FISCAL_CSD_CERTIFICATE:}
+      private-key: ${POSPLATFORM_FISCAL_CSD_PRIVATE_KEY:}
+      password: ${POSPLATFORM_FISCAL_CSD_PASSWORD:}
+    # Vendor-neutral PAC gateway contract (v0.12 · ADR-022).
+    pac:
+      base-url: ${POSPLATFORM_FISCAL_PAC_BASE_URL:}
+      token: ${POSPLATFORM_FISCAL_PAC_TOKEN:}
+      stamp-path: ${POSPLATFORM_FISCAL_PAC_STAMP_PATH:/stamp}
+      cancel-path: ${POSPLATFORM_FISCAL_PAC_CANCEL_PATH:/cancel}
+      timeout-seconds: ${POSPLATFORM_FISCAL_PAC_TIMEOUT_SECONDS:20}
 
 springdoc:
   api-docs:
