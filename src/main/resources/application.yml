@@ -47,9 +47,13 @@ management:
       enabled: true
 
 posplatform:
-  version: 0.12.0
+  version: 0.13.0
   cors:
     allowed-origins: ${POSPLATFORM_CORS_ORIGINS:http://localhost:5173}
+  # Business time zone for report ranges (v0.13 · ADR-023): a sale at 23:59
+  # local belongs to TODAY's corte, not to the UTC date.
+  reports:
+    time-zone: ${POSPLATFORM_REPORTS_TIME_ZONE:America/Mexico_City}
   fiscal:
     # PAC selection (ADR-016 + ADR-022): MOCK sandbox stamps validly-shaped
     # documents instantly; "http" seals with the CSD and calls a PAC gateway.

@@ -13,7 +13,7 @@
 
   <groupId>com.posplatform</groupId>
   <artifactId>backend</artifactId>
-  <version>0.12.0</version>
+  <version>0.13.0</version>
 
   <name>pos-platform-backend</name>
   <description>POS Platform - modular monolith backend (v0.12.0 · PAC real: CSD, sellado CFDI 4.0 y adapter HTTP)</description>
