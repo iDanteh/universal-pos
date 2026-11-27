@@ -32,7 +32,7 @@ public class IdentityTenantRoleProvisioning implements RoleProvisioning {
             "inventory.read", "inventory.write",
             "sales.read", "sales.execute",
             "fiscal.read", "fiscal.write",
-            "cash.operate"
+            "cash.operate", "sync.operate"
     );
 
     private final RoleRepository roleRepository;

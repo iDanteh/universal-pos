@@ -270,7 +270,7 @@ class UsersRolesApiIT extends AbstractDatabaseIT {
                         .header("X-Tenant-Id", tenant))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].system").value(true))
-                .andExpect(jsonPath("$[0].permissions.length()").value(18))
+                .andExpect(jsonPath("$[0].permissions.length()").value(19))
                 .andReturn();
         String systemRoleId = com.jayway.jsonpath.JsonPath.read(
                 listed.getResponse().getContentAsString(), "$[0].id");

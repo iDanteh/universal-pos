@@ -51,7 +51,8 @@ class MultiTenantIsolationIT extends AbstractDatabaseIT {
                 "product", "product_variant", "sale_folio", "sale", "sale_line", "sale_payment",
                 "warehouse", "inventory_movement", "inventory_lot", "inventory_balance",
                 "invoice_folio", "invoice", "invoice_line", "cash_session",
-                "return_folio", "sale_return", "sale_return_line");
+                "return_folio", "sale_return", "sale_return_line",
+                "pos_device", "sync_batch", "sync_operation");
     }
 
     @Test
